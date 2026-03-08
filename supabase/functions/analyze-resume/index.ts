@@ -146,7 +146,7 @@ serve(async (req) => {
                       linkedin: { type: "string" },
                       university: { type: "string" },
                     },
-                    required: ["email", "phone", "linkedin"],
+                    required: [],
                     additionalProperties: false,
                   },
                   experience_years: { type: "number" },
