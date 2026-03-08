@@ -32,10 +32,10 @@ interface Props {
 
 export function CandidateDetailDialog({ candidate, matchScore, open, onOpenChange }: Props) {
   const radarData = matchScore ? [
-    { metric: "Technical", value: matchScore.technical_score || 0, fullMark: 100 },
+    { metric: "Technical Proficiency", value: matchScore.technical_score || 0, fullMark: 100 },
     { metric: "Leadership", value: matchScore.leadership_score || 0, fullMark: 100 },
-    { metric: "Education", value: matchScore.education_score || 0, fullMark: 100 },
-    { metric: "Experience", value: matchScore.experience_score || 0, fullMark: 100 },
+    { metric: "Education Match", value: matchScore.education_score || 0, fullMark: 100 },
+    { metric: "Project Impact", value: matchScore.experience_score || 0, fullMark: 100 },
     { metric: "Soft Skills", value: matchScore.soft_skills_score || 0, fullMark: 100 },
   ] : [];
 
