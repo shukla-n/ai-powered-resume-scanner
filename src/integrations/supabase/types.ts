@@ -147,7 +147,7 @@ export type Database = {
             foreignKeyName: "match_scores_job_description_id_fkey"
             columns: ["job_description_id"]
             isOneToOne: false
-            referencedRelation: "job_descriptions"
+            referencedRelation: "job_roles"
             referencedColumns: ["id"]
           },
         ]
