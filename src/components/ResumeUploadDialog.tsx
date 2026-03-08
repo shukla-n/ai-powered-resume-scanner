@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -8,91 +8,128 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Upload, Loader2, FileText } from "lucide-react";
 
+interface JobRole {
+  id: string;
+  title: string;
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  jobs: { id: string; title: string }[];
-  selectedJob: string;
+  selectedRole: string;
   onUploaded: () => void;
 }
 
-export function ResumeUploadDialog({ open, onOpenChange, jobs, selectedJob, onUploaded }: Props) {
+export function ResumeUploadDialog({ open, onOpenChange, selectedRole, onUploaded }: Props) {
   const { user } = useAuth();
   const [file, setFile] = useState<File | null>(null);
-  const [jobId, setJobId] = useState(selectedJob);
+  const [jobId, setJobId] = useState(selectedRole);
+  const [roles, setRoles] = useState<JobRole[]>([]);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    setJobId(selectedRole);
+  }, [selectedRole]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const loadRoles = async () => {
+      const { data, error } = await (supabase as any)
+        .from("job_roles")
+        .select("*")
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        console.error(error);
+        toast.error("Failed to load job roles");
+        return;
+      }
+
+      const loadedRoles = (data || []) as JobRole[];
+      setRoles(loadedRoles);
+      if (loadedRoles.length > 0 && !jobId) {
+        setJobId(loadedRoles[0].id);
+      }
+    };
+
+    loadRoles();
+  }, [open]);
+
   const handleUpload = async () => {
     if (!file || !user || !jobId) {
-      toast.error("Please select a file and job role");
+      toast.error("Please select a PDF and job role");
+      return;
+    }
+
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      toast.error("Please upload a PDF file");
       return;
     }
 
     setUploading(true);
     try {
-      // Read file text
-      const text = await file.text();
-
-      // Upload file to storage
       const filePath = `${user.id}/${Date.now()}_${file.name}`;
       const { error: uploadError } = await supabase.storage.from("resumes").upload(filePath, file);
       if (uploadError) throw uploadError;
 
-      // Call the edge function to analyze
       const { data: analysisData, error: fnError } = await supabase.functions.invoke("analyze-resume", {
-        body: { resumeText: text, jobDescriptionId: jobId },
+        body: { filePath, jobRoleId: jobId },
       });
 
       if (fnError) throw fnError;
+      if (!analysisData) throw new Error("Analysis response is empty");
 
       const analysis = analysisData;
 
-      // Create candidate
-      const { data: candidate, error: candError } = await supabase.from("candidates").insert({
-        user_id: user.id,
-        name: analysis.contact_info?.name || file.name.replace(/\.[^/.]+$/, ""),
-        email: analysis.contact_info?.email || null,
-        university: analysis.contact_info?.university || null,
-        total_years_experience: analysis.experience_years || 0,
-      }).select().single();
+      const { data: candidate, error: candError } = await supabase
+        .from("candidates")
+        .insert({
+          user_id: user.id,
+          name: analysis.contact_info?.name || file.name.replace(/\.[^/.]+$/, ""),
+          email: analysis.contact_info?.email || null,
+          university: analysis.contact_info?.university || null,
+          total_years_experience: analysis.experience_years || 0,
+        })
+        .select()
+        .single();
 
       if (candError) throw candError;
 
-      // Store resume
-      await supabase.from("resumes").insert({
+      const { error: resumeError } = await supabase.from("resumes").insert({
         candidate_id: candidate.id,
         user_id: user.id,
-        raw_text: text,
+        raw_text: analysis.resume_text || null,
         file_url: filePath,
       });
+      if (resumeError) throw resumeError;
 
-      // Store match scores
       const radar = analysis.radar_stats || {};
-      await supabase.from("match_scores").insert({
+      const scores = analysis.match_scores || {};
+
+      const { error: scoreError } = await supabase.from("match_scores").insert({
         candidate_id: candidate.id,
         job_description_id: jobId,
         user_id: user.id,
-        technical_score: radar.tech || 0,
-        soft_skills_score: radar.soft_skills || 0,
-        experience_score: radar.experience || 0,
-        leadership_score: radar.leadership || 0,
-        education_score: radar.education || 0,
-        overall_score: Math.round(
-          ((radar.tech || 0) + (radar.soft_skills || 0) + (radar.experience || 0) +
-            (radar.leadership || 0) + (radar.education || 0)) / 5
-        ),
+        technical_score: scores.technical ?? radar.tech ?? 0,
+        soft_skills_score: scores.soft_skills ?? radar.soft_skills ?? 0,
+        experience_score: scores.experience ?? radar.projects ?? 0,
+        leadership_score: radar.leadership ?? 0,
+        education_score: radar.education ?? 0,
+        overall_score: scores.overall ?? 0,
         fit_summary: analysis.fit_summary || "",
         contact_info: analysis.contact_info || {},
       });
+      if (scoreError) throw scoreError;
 
       toast.success("Resume analyzed successfully!");
       setFile(null);
       onOpenChange(false);
       onUploaded();
     } catch (err: any) {
-      console.error(err);
-      toast.error(err.message || "Failed to analyze resume");
+      console.error("Resume analysis failed", err);
+      toast.error("Resume analysis failed. Please try again.");
     } finally {
       setUploading(false);
     }
@@ -113,7 +150,7 @@ export function ResumeUploadDialog({ open, onOpenChange, jobs, selectedJob, onUp
                 <SelectValue placeholder="Select job role" />
               </SelectTrigger>
               <SelectContent>
-                {jobs.map((j) => (
+                {roles.map((j) => (
                   <SelectItem key={j.id} value={j.id}>{j.title}</SelectItem>
                 ))}
               </SelectContent>
@@ -125,13 +162,13 @@ export function ResumeUploadDialog({ open, onOpenChange, jobs, selectedJob, onUp
             <input
               ref={fileRef}
               type="file"
-              accept=".txt,.pdf,.doc,.docx"
+              accept=".pdf"
               className="hidden"
               onChange={(e) => setFile(e.target.files?.[0] || null)}
             />
             <div
               onClick={() => fileRef.current?.click()}
-              className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-input p-8 cursor-pointer hover:border-primary/50 transition-colors"
+              className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-input p-8 transition-colors hover:border-primary/50"
             >
               {file ? (
                 <div className="flex items-center gap-2 text-sm">
@@ -140,9 +177,9 @@ export function ResumeUploadDialog({ open, onOpenChange, jobs, selectedJob, onUp
                 </div>
               ) : (
                 <>
-                  <Upload className="h-8 w-8 text-muted-foreground mb-2" />
+                  <Upload className="mb-2 h-8 w-8 text-muted-foreground" />
                   <p className="text-sm text-muted-foreground">Click to select a resume file</p>
-                  <p className="text-xs text-muted-foreground mt-1">.txt, .pdf, .doc, .docx</p>
+                  <p className="mt-1 text-xs text-muted-foreground">.pdf</p>
                 </>
               )}
             </div>
@@ -157,3 +194,4 @@ export function ResumeUploadDialog({ open, onOpenChange, jobs, selectedJob, onUp
     </Dialog>
   );
 }
+

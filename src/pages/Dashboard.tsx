@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/DashboardLayout";
@@ -34,7 +34,7 @@ interface MatchScore {
   contact_info: any;
 }
 
-interface JobDescription {
+interface JobRole {
   id: string;
   title: string;
   description: string | null;
@@ -44,36 +44,45 @@ export default function Dashboard() {
   const { user } = useAuth();
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [matchScores, setMatchScores] = useState<MatchScore[]>([]);
-  const [jobs, setJobs] = useState<JobDescription[]>([]);
-  const [selectedJob, setSelectedJob] = useState<string>("");
+  const [roles, setRoles] = useState<JobRole[]>([]);
+  const [selectedRole, setSelectedRole] = useState<string>("");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     if (!user) return;
     setLoading(true);
 
-    const [candidatesRes, jobsRes, scoresRes] = await Promise.all([
+    const [candidatesRes, rolesRes, scoresRes] = await Promise.all([
       supabase.from("candidates").select("*").order("created_at", { ascending: false }),
-      supabase.from("job_descriptions").select("*").order("created_at", { ascending: false }),
-      supabase.from("match_scores").select("*"),
+      (supabase as any).from("job_roles").select("*").order("created_at", { ascending: true }),
+      supabase.from("match_scores").select("*").order("created_at", { ascending: false }),
     ]);
 
+    if (candidatesRes.error || rolesRes.error || scoresRes.error) {
+      console.error(candidatesRes.error || rolesRes.error || scoresRes.error);
+      toast.error("Failed to load dashboard data");
+    }
+
     if (candidatesRes.data) setCandidates(candidatesRes.data);
-    if (jobsRes.data) {
-      setJobs(jobsRes.data);
-      if (jobsRes.data.length > 0 && !selectedJob) setSelectedJob(jobsRes.data[0].id);
+    if (rolesRes.data) {
+      setRoles(rolesRes.data as JobRole[]);
+      if (rolesRes.data.length > 0 && !selectedRole) setSelectedRole(rolesRes.data[0].id);
     }
     if (scoresRes.data) setMatchScores(scoresRes.data);
+
     setLoading(false);
-  };
+  }, [user, selectedRole]);
 
   useEffect(() => {
     fetchData();
-  }, [user]);
+  }, [fetchData]);
 
-  const filteredScores = matchScores.filter((s) => s.job_description_id === selectedJob);
+  const filteredScores = selectedRole
+    ? matchScores.filter((s) => s.job_description_id === selectedRole)
+    : matchScores;
+
   const candidatesWithScores = candidates.map((c) => {
     const score = filteredScores.find((s) => s.candidate_id === c.id);
     return { ...c, matchScore: score };
@@ -83,12 +92,12 @@ export default function Dashboard() {
   const avgScore = filteredScores.length > 0
     ? Math.round(filteredScores.reduce((sum, s) => sum + (s.overall_score || 0), 0) / filteredScores.length)
     : 0;
-  const highMatches = filteredScores.filter((s) => (s.overall_score || 0) >= 80).length;
+  const highMatches = filteredScores.filter((s) => (s.overall_score || 0) > 80).length;
 
   const stats = [
     { label: "Total Candidates", value: totalCandidates, icon: Users, color: "text-primary" },
     { label: "Avg Match Score", value: `${avgScore}%`, icon: TrendingUp, color: "text-success" },
-    { label: "High Matches (80%+)", value: highMatches, icon: FileText, color: "text-warning" },
+    { label: "High Matches (>80)", value: highMatches, icon: FileText, color: "text-warning" },
   ];
 
   return (
@@ -101,26 +110,26 @@ export default function Dashboard() {
       }
     >
       <div className="space-y-6 animate-fade-in">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
             <p className="text-sm text-muted-foreground">Screen and analyze candidate resumes with AI</p>
           </div>
-          {jobs.length > 0 && (
-            <Select value={selectedJob} onValueChange={setSelectedJob}>
-              <SelectTrigger className="w-[220px]">
+          {roles.length > 0 && (
+            <Select value={selectedRole} onValueChange={setSelectedRole}>
+              <SelectTrigger className="w-[240px]">
                 <SelectValue placeholder="Select job role" />
               </SelectTrigger>
               <SelectContent>
-                {jobs.map((job) => (
-                  <SelectItem key={job.id} value={job.id}>{job.title}</SelectItem>
+                {roles.map((role) => (
+                  <SelectItem key={role.id} value={role.id}>{role.title}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {stats.map((stat) => (
             <Card key={stat.label}>
               <CardContent className="flex items-center gap-4 p-5">
@@ -146,8 +155,7 @@ export default function Dashboard() {
       <ResumeUploadDialog
         open={uploadOpen}
         onOpenChange={setUploadOpen}
-        jobs={jobs}
-        selectedJob={selectedJob}
+        selectedRole={selectedRole}
         onUploaded={fetchData}
       />
 
@@ -162,3 +170,4 @@ export default function Dashboard() {
     </DashboardLayout>
   );
 }
+

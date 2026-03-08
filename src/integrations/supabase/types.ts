@@ -68,6 +68,27 @@ export type Database = {
         }
         Relationships: []
       }
+      job_roles: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          title: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          title?: string
+        }
+        Relationships: []
+      }
       match_scores: {
         Row: {
           candidate_id: string
